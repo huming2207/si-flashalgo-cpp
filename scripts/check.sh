@@ -15,6 +15,10 @@ echo "== STM32WL example (${build}/stm32wl)"
 cmake -S "$src/examples/stm32wl" -B "$build/stm32wl" -G Ninja
 cmake --build "$build/stm32wl"
 
+# -O0 too: unoptimised builds pull in things -Os removes (libstdc++ assertions, missed constant folding)
+cmake -S "$src/examples/stm32wl" -B "$build/stm32wl-debug" -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build "$build/stm32wl-debug"
+
 elf="$build/stm32wl/stm32wle5_algo.elf"
 if [ -n "$(arm-none-eabi-nm -u "$elf")" ]; then
     echo "unexpected undefined symbols in $elf" >&2

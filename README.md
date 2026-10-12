@@ -257,7 +257,7 @@ sets it for you). `flashalgo::flashalgo` adds the include path and the required 
 
 ```sh
 arm-none-eabi-g++ -std=gnu++26 -freflection -fno-exceptions -fno-rtti -fno-threadsafe-statics \
-    -fno-use-cxa-atexit -Os -ffunction-sections -fdata-sections -mcpu=cortex-m4 -mthumb \
+    -fno-use-cxa-atexit -D_GLIBCXX_NO_ASSERTIONS -Os -ffunction-sections -fdata-sections -mcpu=cortex-m4 -mthumb \
     -I path/to/include algorithm.cpp -o algo.elf \
     -nostartfiles --specs=nano.specs -Wl,--gc-sections -Wl,--no-warn-rwx-segments \
     -Wl,--defsym=FLASHALGO_LOAD_ADDRESS=0x20000020 -T path/to/ld/flashalgo.ld
@@ -280,11 +280,11 @@ flash_algorithms:
     load_address: 0x20000020
     pc_init: 0x25                  # entry point offsets (Thumb bit included)
     pc_uninit: 0x1
-    pc_program_page: 0x109
+    pc_program_page: 0x105
     pc_erase_sector: 0xa9
-    pc_erase_all: 0x1a5
-    pc_verify: 0x1e5
-    data_section_offset: 0x20000310
+    pc_erase_all: 0x1f1
+    pc_verify: 0x22d
+    data_section_offset: 0x20000368
     flash_properties:
       address_range:
         start: 0x8000000
@@ -336,6 +336,10 @@ code and no interrupts. In practice:
 - **Watchdogs.** If the option bytes start the IWDG in hardware, reload it in long operations.
 - **`memcpy`/`memset`.** GCC may emit calls to these. `--specs=nano.specs` links newlib-nano's small
   versions (28 bytes for `memcpy`); nothing else from the C library is pulled in unless you call it.
+- **Debug builds (`-O0`).** GCC 15+ turns on libstdc++'s run-time assertions when not optimizing, and a
+  failing one calls `fprintf()` and `abort()`, which can't link here (`undefined reference to _exit`).
+  `flashalgo::flashalgo` defines `_GLIBCXX_NO_ASSERTIONS` to turn them off; add it yourself when you
+  build without CMake.
 - **Standard library.** Freestanding-friendly headers like `<span>`, `<cstdint>` and `<array>` are fine.
   Anything that allocates or does I/O is not. The library itself uses `<meta>` and friends only at compile
   time: `nm -u` on an algorithm is empty.
@@ -347,7 +351,7 @@ All numbers are for Cortex-M4, `-Os`, GCC 16.2. They count only what the program
 | Build | Code + data loaded to RAM |
 | ----- | ------------------------- |
 | Library overhead: `Init`, `UnInit`, `EraseSector`, `ProgramPage`, `EraseChip`, `Verify` with a two-test dispatcher, all hooks empty | 160 bytes |
-| [`examples/stm32wl`](examples/stm32wl): page/mass erase, double-word programming, two self tests | 752 bytes |
+| [`examples/stm32wl`](examples/stm32wl): page/mass erase, fast row (FSTPG) + double-word programming, two self tests | 840 bytes |
 
 `FlashDevice` and the self test table are not loaded: they live only in the ELF.
 

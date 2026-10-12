@@ -15,6 +15,9 @@ add_library(flashalgo::flashalgo ALIAS flashalgo)
 
 target_include_directories(flashalgo INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(flashalgo INTERFACE cxx_std_26)
+# GCC >= 15 turns libstdc++ run-time assertions on at -O0; a failing one calls fprintf() and abort(),
+# which a flash algorithm can't link (or use). Compile-time checks in constexpr code stay on.
+target_compile_definitions(flashalgo INTERFACE _GLIBCXX_NO_ASSERTIONS)
 target_compile_options(
     flashalgo INTERFACE
     -freflection

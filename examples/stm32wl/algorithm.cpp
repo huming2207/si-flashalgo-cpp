@@ -16,24 +16,22 @@ using flashalgo::exec_state;
 
 namespace
 {
-    inline volatile std::uint32_t &reg(std::uintptr_t addr)
-    {
-        return *reinterpret_cast<volatile std::uint32_t *>(addr);
-    }
+    // Memory-mapped registers, as volatile pointers: every read and write goes to the hardware and
+    // the compiler can't merge, reorder or drop them. (ST's CMSIS headers do the same with FLASH->CR.)
 
     // RCC
-    constexpr std::uintptr_t RCC_CR = 0x5800'0000;
+    volatile std::uint32_t *const RCC_CR = reinterpret_cast<volatile std::uint32_t *>(0x5800'0000);
     constexpr std::uint32_t RCC_CR_MSIRDY = 1u << 1;
     constexpr std::uint32_t RCC_CR_MSIRGSEL = 1u << 3;
     constexpr std::uint32_t RCC_CR_MSIRANGE_MASK = 0xfu << 4;
     constexpr std::uint32_t RCC_CR_MSIRANGE_16MHZ = 8u << 4;
 
     // FLASH
-    constexpr std::uintptr_t FLASH_ACR = 0x5800'4000;
-    constexpr std::uintptr_t FLASH_KEYR = 0x5800'4008;
-    constexpr std::uintptr_t FLASH_SR = 0x5800'4010;
-    constexpr std::uintptr_t FLASH_CR = 0x5800'4014;
-    constexpr std::uintptr_t FLASH_OPTR = 0x5800'4020;
+    volatile std::uint32_t *const FLASH_ACR = reinterpret_cast<volatile std::uint32_t *>(0x5800'4000);
+    volatile std::uint32_t *const FLASH_KEYR = reinterpret_cast<volatile std::uint32_t *>(0x5800'4008);
+    volatile std::uint32_t *const FLASH_SR = reinterpret_cast<volatile std::uint32_t *>(0x5800'4010);
+    volatile std::uint32_t *const FLASH_CR = reinterpret_cast<volatile std::uint32_t *>(0x5800'4014);
+    volatile std::uint32_t *const FLASH_OPTR = reinterpret_cast<volatile std::uint32_t *>(0x5800'4020);
 
     constexpr std::uint32_t FLASH_ACR_PRFTEN = 1u << 8;
     constexpr std::uint32_t FLASH_ACR_ICEN = 1u << 9;
@@ -46,6 +44,7 @@ namespace
                                               (1u << 9) | (1u << 14) | (1u << 15); // OPERR..FASTERR, RDERR, OPTVERR
     constexpr std::uint32_t FLASH_SR_BSY = 1u << 16;
     constexpr std::uint32_t FLASH_SR_CFGBSY = 1u << 18;
+    constexpr std::uint32_t FLASH_SR_PESD = 1u << 19;
 
     constexpr std::uint32_t FLASH_CR_PG = 1u << 0;
     constexpr std::uint32_t FLASH_CR_PER = 1u << 1;
@@ -53,22 +52,24 @@ namespace
     constexpr std::uint32_t FLASH_CR_PNB_SHIFT = 3;
     constexpr std::uint32_t FLASH_CR_PNB_MASK = 0x7fu << FLASH_CR_PNB_SHIFT;
     constexpr std::uint32_t FLASH_CR_STRT = 1u << 16;
+    constexpr std::uint32_t FLASH_CR_FSTPG = 1u << 18;
     constexpr std::uint32_t FLASH_CR_LOCK = 1u << 31;
 
     constexpr std::uint32_t FLASH_KEY1 = 0x4567'0123;
     constexpr std::uint32_t FLASH_KEY2 = 0xcdef'89ab;
 
     // IWDG
-    constexpr std::uintptr_t IWDG_KR = 0x4000'3000;
+    volatile std::uint32_t *const IWDG_KR = reinterpret_cast<volatile std::uint32_t *>(0x4000'3000);
     constexpr std::uint32_t IWDG_KEY_RELOAD = 0xaaaa;
 
     // Unique device ID: UID96 then UID64, 20 bytes
-    constexpr std::uintptr_t UID96 = 0x1fff'7590;
-    constexpr std::uintptr_t UID64 = 0x1fff'7580;
+    const volatile std::uint8_t *const UID96 = reinterpret_cast<const volatile std::uint8_t *>(0x1fff'7590);
+    const volatile std::uint8_t *const UID64 = reinterpret_cast<const volatile std::uint8_t *>(0x1fff'7580);
 
     constexpr std::uint32_t flash_base = 0x0800'0000;
     constexpr std::uint32_t flash_size = 0x4'0000;
     constexpr std::uint32_t page_size = 0x800;
+    constexpr std::uint32_t row_size = 256; // fast programming unit: 32 double words
 
     // ~ a few hundred ms at 16 MHz; mass erase is the slowest operation
     constexpr std::uint32_t busy_spin_limit = 4'000'000;
@@ -90,15 +91,15 @@ public:
     {
         // 16 MHz MSI needs no flash wait states, and the algorithm runs from RAM, so the flash
         // cache and prefetch don't help: turn them off.
-        while ((reg(RCC_CR) & RCC_CR_MSIRDY) == 0) {
+        while ((*RCC_CR & RCC_CR_MSIRDY) == 0) {
         }
-        reg(RCC_CR) = (reg(RCC_CR) & ~RCC_CR_MSIRANGE_MASK) | RCC_CR_MSIRANGE_16MHZ | RCC_CR_MSIRGSEL;
-        while ((reg(RCC_CR) & RCC_CR_MSIRDY) == 0) {
+        *RCC_CR = (*RCC_CR & ~RCC_CR_MSIRANGE_MASK) | RCC_CR_MSIRANGE_16MHZ | RCC_CR_MSIRGSEL;
+        while ((*RCC_CR & RCC_CR_MSIRDY) == 0) {
         }
 
-        reg(FLASH_ACR) &= ~(FLASH_ACR_ICEN | FLASH_ACR_DCEN | FLASH_ACR_PRFTEN);
-        reg(FLASH_ACR) |= FLASH_ACR_ICRST | FLASH_ACR_DCRST;
-        reg(FLASH_ACR) &= ~(FLASH_ACR_ICRST | FLASH_ACR_DCRST);
+        *FLASH_ACR &= ~(FLASH_ACR_ICEN | FLASH_ACR_DCEN | FLASH_ACR_PRFTEN);
+        *FLASH_ACR |= FLASH_ACR_ICRST | FLASH_ACR_DCRST;
+        *FLASH_ACR &= ~(FLASH_ACR_ICRST | FLASH_ACR_DCRST);
 
         kick_watchdog();
         return unlock();
@@ -106,7 +107,7 @@ public:
 
     exec_state deinit()
     {
-        reg(FLASH_CR) |= FLASH_CR_LOCK;
+        *FLASH_CR |= FLASH_CR_LOCK;
         return flashalgo::ok;
     }
 
@@ -121,10 +122,10 @@ public:
         if (state != flashalgo::ok) {
             return state;
         }
-        reg(FLASH_CR) = (reg(FLASH_CR) & ~FLASH_CR_PNB_MASK) | FLASH_CR_PER | (page << FLASH_CR_PNB_SHIFT);
-        reg(FLASH_CR) |= FLASH_CR_STRT;
+        *FLASH_CR = (*FLASH_CR & ~FLASH_CR_PNB_MASK) | FLASH_CR_PER | (page << FLASH_CR_PNB_SHIFT);
+        *FLASH_CR |= FLASH_CR_STRT;
         state = wait_done();
-        reg(FLASH_CR) &= ~(FLASH_CR_PER | FLASH_CR_PNB_MASK);
+        *FLASH_CR &= ~(FLASH_CR_PER | FLASH_CR_PNB_MASK);
         return state;
     }
 
@@ -134,41 +135,37 @@ public:
         if (state != flashalgo::ok) {
             return state;
         }
-        reg(FLASH_CR) |= FLASH_CR_MER;
-        reg(FLASH_CR) |= FLASH_CR_STRT;
+        *FLASH_CR |= FLASH_CR_MER;
+        *FLASH_CR |= FLASH_CR_STRT;
         state = wait_done();
-        reg(FLASH_CR) &= ~FLASH_CR_MER;
+        *FLASH_CR &= ~FLASH_CR_MER;
         return state;
     }
 
-    // Standard double-word programming (RM0461 3.3.8). Fast row programming (FSTPG, 256-byte rows)
-    // is faster but has more preconditions; it is left out to keep the example short.
+    /*
+     * Full, row-aligned 256-byte rows use fast programming (FSTPG): one high-voltage cycle per row
+     * instead of one per double word. Anything else (a short tail, an unaligned start) falls back to
+     * standard double-word programming. Both need the area erased first, which the programmer does.
+     */
     exec_state program_page(std::uint32_t addr, std::span<const std::byte> data)
     {
         if (addr % 8 != 0 || addr < flash_base || addr - flash_base + data.size() > flash_size) {
             return flashalgo::err_invalid_addr;
         }
 
-        exec_state state = begin_operation();
-        if (state != flashalgo::ok) {
-            return state;
+        exec_state state = flashalgo::ok;
+        std::size_t off = 0;
+        while (off < data.size() && state == flashalgo::ok) {
+            const std::uint32_t dest = addr + off;
+            const std::size_t left = data.size() - off;
+            if (dest % row_size == 0 && left >= row_size) {
+                state = program_row(dest, data.data() + off);
+                off += row_size;
+            } else {
+                state = program_double_word(dest, data.subspan(off, left < 8 ? left : 8));
+                off += 8;
+            }
         }
-
-        reg(FLASH_CR) |= FLASH_CR_PG;
-        for (std::size_t off = 0; off < data.size() && state == flashalgo::ok; off += 8) {
-            std::uint8_t dword[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}; // pads a short tail
-            const std::size_t n = data.size() - off < 8 ? data.size() - off : 8;
-            std::memcpy(dword, data.data() + off, n);
-
-            std::uint32_t lo;
-            std::uint32_t hi;
-            std::memcpy(&lo, dword, 4);
-            std::memcpy(&hi, dword + 4, 4);
-            reg(addr + off) = lo;
-            reg(addr + off + 4) = hi;
-            state = wait_done();
-        }
-        reg(FLASH_CR) &= ~FLASH_CR_PG;
         return state;
     }
 
@@ -181,10 +178,10 @@ public:
             return flashalgo::err_invalid_arg;
         }
         for (std::size_t i = 0; i < 12; i++) {
-            out[i] = std::byte(reinterpret_cast<const volatile std::uint8_t *>(UID96)[i]);
+            out[i] = std::byte(UID96[i]);
         }
         for (std::size_t i = 0; i < 8; i++) {
-            out[12 + i] = std::byte(reinterpret_cast<const volatile std::uint8_t *>(UID64)[i]);
+            out[12 + i] = std::byte(UID64[i]);
         }
         return flashalgo::ok;
     }
@@ -192,7 +189,7 @@ public:
     /** Passes while read protection is still level 0 (RDP byte 0xAA). */
     [[=flashalgo::test{0xfffff008, "RDP level 0"}]] exec_state rdp_is_level0()
     {
-        return (reg(FLASH_OPTR) & 0xff) == 0xaa ? flashalgo::ok : exec_state(flashalgo::err_user_base + 1);
+        return (*FLASH_OPTR & 0xff) == 0xaa ? flashalgo::ok : exec_state(flashalgo::err_user_base + 1);
     }
 
 private:
@@ -202,40 +199,97 @@ private:
      */
     static void kick_watchdog()
     {
-        reg(IWDG_KR) = IWDG_KEY_RELOAD;
+        *IWDG_KR = IWDG_KEY_RELOAD;
     }
 
     static exec_state unlock()
     {
-        if ((reg(FLASH_CR) & FLASH_CR_LOCK) != 0) {
-            reg(FLASH_KEYR) = FLASH_KEY1;
-            reg(FLASH_KEYR) = FLASH_KEY2;
+        if ((*FLASH_CR & FLASH_CR_LOCK) != 0) {
+            *FLASH_KEYR = FLASH_KEY1;
+            *FLASH_KEYR = FLASH_KEY2;
         }
-        return (reg(FLASH_CR) & FLASH_CR_LOCK) == 0 ? flashalgo::ok : flashalgo::err_fail;
+        return (*FLASH_CR & FLASH_CR_LOCK) == 0 ? flashalgo::ok : flashalgo::err_fail;
     }
 
     static exec_state begin_operation()
     {
         kick_watchdog();
-        for (std::uint32_t spin = 0; (reg(FLASH_SR) & FLASH_SR_BSY) != 0; spin++) {
+        for (std::uint32_t spin = 0; (*FLASH_SR & FLASH_SR_BSY) != 0; spin++) {
             if (spin == busy_spin_limit) {
                 return flashalgo::err_timeout;
             }
         }
-        reg(FLASH_SR) = FLASH_SR_ERRORS | FLASH_SR_EOP; // write 1 to clear
+        if ((*FLASH_SR & FLASH_SR_PESD) != 0) {
+            return flashalgo::err_fail; // programming/erase suspended (the other core, on dual-core parts)
+        }
+        *FLASH_SR = FLASH_SR_ERRORS | FLASH_SR_EOP; // write 1 to clear
         return flashalgo::ok;
+    }
+
+    /** One 64-bit double word; a short `data` (the tail of a page) is padded with 0xff. */
+    static exec_state program_double_word(std::uint32_t dest, std::span<const std::byte> data)
+    {
+        exec_state state = begin_operation();
+        if (state != flashalgo::ok) {
+            return state;
+        }
+
+        std::uint8_t dword[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+        std::memcpy(dword, data.data(), data.size());
+        std::uint32_t lo;
+        std::uint32_t hi;
+        std::memcpy(&lo, dword, 4);
+        std::memcpy(&hi, dword + 4, 4);
+
+        volatile std::uint32_t *flash = reinterpret_cast<volatile std::uint32_t *>(dest);
+        *FLASH_CR |= FLASH_CR_PG;
+        flash[0] = lo;
+        flash[1] = hi;
+        state = wait_done();
+        *FLASH_CR &= ~FLASH_CR_PG;
+        return state;
+    }
+
+    /**
+     * One 256-byte row with fast programming (RM0461 3.3.8). The 64 word writes must follow each
+     * other without a gap and without any flash access in between, or the row fails with MISSERR /
+     * FASTERR. The algorithm already runs from RAM; interrupts are masked so that a pending one
+     * can't fetch its vector from flash in the middle. Needs HCLK >= 8 MHz (init() sets 16 MHz).
+     */
+    static exec_state program_row(std::uint32_t dest, const std::byte *src)
+    {
+        exec_state state = begin_operation();
+        if (state != flashalgo::ok) {
+            return state;
+        }
+
+        std::uint32_t primask;
+        asm volatile("mrs %0, primask\n\tcpsid i" : "=r"(primask)::"memory");
+
+        volatile std::uint32_t *flash = reinterpret_cast<volatile std::uint32_t *>(dest);
+        *FLASH_CR |= FLASH_CR_FSTPG;
+        for (std::uint32_t i = 0; i < row_size / 4; i++) {
+            std::uint32_t word;
+            std::memcpy(&word, src + i * 4, 4); // the programmer's buffer may be unaligned
+            flash[i] = word;
+        }
+        state = wait_done();
+        *FLASH_CR &= ~FLASH_CR_FSTPG;
+
+        asm volatile("msr primask, %0" ::"r"(primask) : "memory");
+        return state;
     }
 
     static exec_state wait_done()
     {
-        for (std::uint32_t spin = 0; (reg(FLASH_SR) & FLASH_SR_CFGBSY) != 0; spin++) {
+        for (std::uint32_t spin = 0; (*FLASH_SR & (FLASH_SR_BSY | FLASH_SR_CFGBSY)) != 0; spin++) {
             if (spin == busy_spin_limit) {
                 return flashalgo::err_timeout;
             }
         }
-        const std::uint32_t errors = reg(FLASH_SR) & FLASH_SR_ERRORS;
+        const std::uint32_t errors = *FLASH_SR & FLASH_SR_ERRORS;
         if (errors != 0) {
-            reg(FLASH_SR) = errors;
+            *FLASH_SR = errors;
             return exec_state(flashalgo::err_user_base | static_cast<std::int32_t>(errors)); // the raw SR error bits, for debugging
         }
         return flashalgo::ok;
