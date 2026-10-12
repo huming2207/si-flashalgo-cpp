@@ -1,0 +1,58 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+out/
+
+# CMake temporaries
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+CMakeUserPresets.json
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+Testing/
+_deps/
+compile_commands.json
+.ninja_deps
+.ninja_log
+*.cmake.tmp
+
+# Compiler output
+*.o
+*.obj
+*.a
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+*.d
+*.su
+
+# Editors / tooling
+.vscode/
+.idea/
+.cache/
+.clangd/
+*.swp
+*~
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# Linux
+.directory
+.Trash-*
+.nfs*
